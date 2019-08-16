@@ -1,0 +1,462 @@
+---
+params:
+  Provider: "ALBERT EINSTEIN MED CTR (106333)"
+title: "Provider Performance on Follow-Up and Readmission"
+author: "Community Behavioral Health | Prepared by Jessica Streeter, Data Scientist"
+date: "`r Sys.Date()`"
+output: pdf_document
+header-includes:
+- \usepackage{booktabs}
+- \usepackage{longtable}
+- \usepackage{array}
+- \usepackage{multirow}
+- \usepackage{wrapfig}
+- \usepackage{float}
+- \usepackage{colortbl}
+- \usepackage{pdflscape}
+- \usepackage{tabu}
+- \usepackage{threeparttable}
+- \usepackage{threeparttablex}
+- \usepackage[normalem]{ulem}
+- \usepackage{makecell}
+- \usepackage{xcolor}
+
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = F, warning = F, message = F)
+
+options(tinytex.verbose = TRUE) #long form errors issued for latex
+options(kableExtra.latex.load_packages = FALSE) #need this to get kableextra and tinytex to play nice
+options(knitr.table.format = "latex")
+
+library(tidyverse)
+library(zoo)
+library(scales)
+library(kableExtra)
+
+#All this done in one step because data is already exceptionally clean from SQL code.
+Hedis <- read_csv("RawData/IPROdata_7-12-2019.csv") %>% 
+  mutate(AgeCat = as.factor(AgeCat),
+         Measure_Name = as.factor(Measure_Name),
+         Network = as.factor(ifelse(grepl("OON", Provider_Master_Label_DC), "OON", "In-Network")),
+         MinDenom = ifelse(Denom >= 20, "Yes", "No"),
+         BeginDate = as.Date(RptDateBeg, "%m/%d/%Y"),
+         EndDate = as.Date(RptDateEnd, "%m/%d/%Y")) %>% 
+  filter(Frequency == "Monthly") %>% 
+  select(-Frequency, -Provider_Master_BK_DC, -RptDateBeg, -RptDateEnd) %>% 
+  rename( Provider_Label = Provider_Master_Label_DC) 
+
+
+#Creating goal dataset
+Measures <- Hedis %>% 
+  group_by(Measure_Name) %>% 
+  summarize(n()) %>%  
+  arrange(Measure_Name) %>% 
+  select(Measure_Name)
+Goals2019 <- c(.4795, .3195, .7500, .6300, .1300)
+GoalOwner <- c("State", "State", "PeopleStat", "PeopleStat", "PeopleStat")
+  
+Goals <- cbind(Measures, Goals2019, GoalOwner)
+
+#Test parameter
+#Provider <- "TEMPLE U HOSP @ EPISCOPAL (119344)"
+Age <- "Adult"
+```
+
+## Provider: `r params$Provider` 
+## Age: `r Age`
+
+
+### Data 
+All data based on paid claims using the specifications set forth by the state's external quality review organization, IPRO.  While there are many differences between HEDIS and PA-specific follow-up rates, the main differences are as follows:
+
+* HEDIS does not include TCM as an acceptable follow-up, and does not include same-day follow-up as of 2018 (MY2017).
+* PA-Specific includes TCM, and allows for same-day follow-up.
+
+### Performance Goals
+Performance goals on each of the 5 metrics are set by external groups.  PeopleStat set the goals for PA-Specific and Readmission metrics, while the state set goals for HEDIS metrics.  Additionally, there is a national benchmark for readmission of 10%. Performance above the follow-up goals and performance below the readmission goal is desirable.
+
+```{r 2019Goals}
+Goals %>%  
+  mutate(Goals2019 = round(Goals2019 * 100, 2)) %>% 
+  rename(Measure = Measure_Name, 
+         "2019 Goals" = Goals2019,
+         "Set By" = GoalOwner) %>% 
+  kable(booktabs = T, caption = "2019 Performance Goals") %>% 
+  kable_styling(latex_options = c("striped", "condensed", "hold_position"), full_width = F)
+```
+## Using the following figures
+Each metric has both a time trend and an overall performance ranking.  Performance goal lines are available on both figures. 
+
+### Time Trends
+Time trends compare your monthly performance since 2017 to the performance of all other providers.  The time trends have both the actual data (dotted lines and points) and the trend line (solid line with grey shaded area).  The grey areas around the solid lines represent the standard error; if the grey areas overlap between your performance and the performance of all other providers, this means your performance is likely not significantly different from the performance of all other providers. 
+
+### Provider Ranking
+The provider ranking figure uses the last 6 months of available data to calculate an overall rate.  Providers with at least 20 qualifying discharges during this time period are then ranked.  All providers other than you are blinded.
+
+## HEDIS
+
+### 7 Day Performance and Rank 
+```{r Hedis7day, out.width=c('50%', '50%'), fig.show='hold'}
+#Hedis 7 fig####
+Hedis %>% 
+  filter(Measure_Name %in% c("HEDIS-7 Day Follow-Up") & AgeCat == Age) %>% 
+  mutate(RCproviderflag = factor(ifelse(Provider_Label == params$Provider, Provider_Label, "All Other Providers"))) %>% 
+  mutate(RCproviderflag = fct_relevel(RCproviderflag, "All Other Providers")) %>% 
+  group_by(RCproviderflag, BeginDate) %>% 
+  summarize(Denom = sum(Denom),
+            Num = sum(Num),
+            FUP = Num/Denom) %>% 
+  ggplot(aes(x = as.yearmon(BeginDate), y = FUP, color = RCproviderflag)) +
+  geom_line(linetype = 2) +
+  geom_point() +
+  geom_smooth(alpha = .2) +
+  geom_hline(data = Goals, yintercept = Goals$Goals2019[Goals$Measure_Name =="HEDIS-7 Day Follow-Up"], 
+              size = 1.5, linetype = 1, alpha = .4) +
+  #geom_text(inherit.aes = F, vjust = -1,
+    #        aes(x = 2018.5, y = Goals$Goals2019[Goals$Measure_Name =="HEDIS-7 Day Follow-Up"],
+   #             label = paste0("2019 Goal set by ", Goals$GoalOwner[Goals$Measure_Name == "HEDIS-7 Day Follow-Up"]))) +
+  labs(title = "HEDIS: 7 Day Follow-Up for All Providers",
+       x = "Discharge Month",
+       y = "Percent FUP",
+       color = "Providers",
+       caption = paste0("Total Number of Eligible Discharges: \n", 
+                        params$Provider, ": ", 
+                        sum(Hedis$Denom[Hedis$Provider_Label == params$Provider & Hedis$Measure_Name == "HEDIS-7 Day Follow-Up"]), 
+                        "; All Other Providers: ", 
+                        sum(Hedis$Denom[Hedis$Provider_Label != params$Provider & Hedis$Measure_Name == "HEDIS-7 Day Follow-Up"]))) +
+  scale_x_yearmon() +
+  scale_y_continuous(label = percent, limits = c(0, 1), 
+                     breaks = sort(c(seq(0, 1, length.out=6), Goals$Goals2019[Goals$Measure_Name == "HEDIS-7 Day Follow-Up"]))) +
+  scale_color_manual(values = c("black", "gold")) +
+  theme(legend.position = "bottom")
+
+#Overall Rank HEDIS7####
+HEDIS7Rank <- Hedis %>% 
+  filter(Measure_Name %in% c("HEDIS-7 Day Follow-Up") &
+           AgeCat == Age &
+           as.yearmon(EndDate) >= as.yearmon(max(EndDate))-5/12) %>%  #filters to last 6 months of data in report. 
+  mutate(RCproviderflag = factor(ifelse(Provider_Label == params$Provider, Provider_Label, "All Other Providers"))) %>% 
+  mutate(RCproviderflag = fct_relevel(RCproviderflag, "All Other Providers")) %>% 
+  group_by(RCproviderflag, Provider_Label) %>% 
+  summarize(Denom = sum(Denom),
+            Num = sum(Num),
+            FUP = Num/Denom) %>% 
+  filter(Denom >= 20) %>% #filtering out super small providers
+  ungroup() %>% 
+  mutate(rank = rank(-FUP)) %>% 
+  ggplot(aes(x= reorder(Provider_Label, -FUP), y = FUP, fill = RCproviderflag)) +
+  geom_bar(stat = "identity") +
+  geom_label(aes(label = rank)) +
+  geom_hline(data = Goals, yintercept = Goals$Goals2019[Goals$Measure_Name =="HEDIS-7 Day Follow-Up"], 
+             size = 1.5, linetype = 1, alpha = .3) +
+  labs(title = "Overall Performance on HEDIS-7 Day Follow-Up",
+       subtitle = paste0("Based on last 6 months of available data (", 
+                         as.yearmon(max(Hedis$EndDate))-5/12, " - ", as.yearmon(max(Hedis$EndDate)), ")"),
+       caption = "Limited to providers with >= 20 discharges",
+       x = "Providers",
+       y = "Percent FUP",
+       fill = "Providers") +
+  scale_fill_manual(values = c("grey", "gold")) +
+  theme(axis.text.x = element_blank()) +
+  theme(legend.position = "bottom")
+
+HEDIS7Rank + scale_y_continuous(label = percent,
+                                 breaks = sort(c(ggplot_build(HEDIS7Rank)$layout$panel_params[[1]]$y.major_source, 
+                                                 Goals$Goals2019[Goals$Measure_Name == "HEDIS-7 Day Follow-Up"])))
+
+
+```
+
+
+### 30 Day Performance and Rank
+
+```{r Hedis30, out.width=c('50%', '50%'), fig.show='hold'}
+#HEDIS 30 figure####
+Hedis %>% 
+  filter(Measure_Name %in% c("HEDIS-30 Day Follow-Up") & AgeCat == Age) %>% 
+  mutate(RCproviderflag = factor(ifelse(Provider_Label == params$Provider, Provider_Label, "All Other Providers"))) %>% 
+  mutate(RCproviderflag = fct_relevel(RCproviderflag, "All Other Providers")) %>% 
+  group_by(RCproviderflag, BeginDate) %>% 
+  summarize(Denom = sum(Denom),
+            Num = sum(Num),
+            FUP = Num/Denom) %>% 
+  ggplot(aes(x = as.yearmon(BeginDate), y = FUP, color = RCproviderflag)) +
+  geom_line(linetype = 2) +
+  geom_point() +
+  geom_smooth(alpha = .2) +
+  geom_hline(data = Goals, yintercept = Goals$Goals2019[Goals$Measure_Name =="HEDIS-30 Day Follow-Up"], 
+              size = 1.5, linetype = 1, alpha = .4) +
+ # geom_text(inherit.aes = F, vjust = -1,
+  #          aes(x = 2018.5, y = Goals$Goals2019[Goals$Measure_Name =="HEDIS-30 Day Follow-Up"],
+   #             label = paste0("2019 Goal set by ", Goals$GoalOwner[Goals$Measure_Name == "HEDIS-30 Day Follow-Up"]))) +
+  labs(title = "HEDIS: 30 Day Follow-Up for All Providers",
+       x = "Discharge Month",
+       y = "Percent FUP",
+       color = "Providers",
+       caption = paste0("Total Number of Eligible Discharges: \n", 
+                         params$Provider, ": ", 
+                        sum(Hedis$Denom[Hedis$Provider_Label == params$Provider & Hedis$Measure_Name == "HEDIS-30 Day Follow-Up"]), 
+                        "; All Other Providers: ", 
+                        sum(Hedis$Denom[Hedis$Provider_Label != params$Provider & Hedis$Measure_Name == "HEDIS-30 Day Follow-Up"]))) +
+  scale_x_yearmon() +
+  scale_y_continuous(label = percent, limits = c(0, 1), 
+                     breaks = sort(c(seq(0, 1, length.out=6), Goals$Goals2019[Goals$Measure_Name == "HEDIS-30 Day Follow-Up"])))+
+  scale_color_manual(values = c("black", "gold")) +
+  theme(legend.position = "bottom")
+
+#Overall Rank HEDIS30####
+HEDIS30Rank <- Hedis %>% 
+  filter(Measure_Name %in% c("HEDIS-30 Day Follow-Up") &
+           AgeCat == Age &
+           as.yearmon(EndDate) >= as.yearmon(max(EndDate))-5/12) %>%  #filters to last 6 months of data in report. 
+  mutate(RCproviderflag = factor(ifelse(Provider_Label == params$Provider, Provider_Label, "All Other Providers"))) %>% 
+  mutate(RCproviderflag = fct_relevel(RCproviderflag, "All Other Providers")) %>% 
+  group_by(RCproviderflag, Provider_Label) %>% 
+  summarize(Denom = sum(Denom),
+            Num = sum(Num),
+            FUP = Num/Denom) %>% 
+  filter(Denom >= 20) %>% #filtering out super small providers
+  ungroup() %>% 
+  mutate(rank = rank(-FUP)) %>% 
+  ggplot(aes(x= reorder(Provider_Label, -FUP), y = FUP, fill = RCproviderflag)) +
+  geom_bar(stat = "identity") +
+  geom_label(aes(label = rank)) +
+  geom_hline(data = Goals, yintercept = Goals$Goals2019[Goals$Measure_Name =="HEDIS-30 Day Follow-Up"], 
+             size = 1.5, linetype = 1, alpha = .3) +
+  labs(title = "Overall Performance on HEDIS-30 Day Follow-Up",
+       subtitle = paste0("Based on last 6 months of available data (", 
+                         as.yearmon(max(Hedis$EndDate))-5/12, " - ", as.yearmon(max(Hedis$EndDate)), ")"),
+       caption = "Limited to providers with >= 20 discharges",
+       x = "Providers",
+       y = "Percent FUP",
+       fill = "Providers") +
+  scale_fill_manual(values = c("grey", "gold")) +
+  theme(axis.text.x = element_blank()) +
+  theme(legend.position = "bottom")
+
+HEDIS30Rank + scale_y_continuous(label = percent,
+                              breaks = sort(c(ggplot_build(HEDIS30Rank)$layout$panel_params[[1]]$y.major_source, 
+                                              Goals$Goals2019[Goals$Measure_Name == "HEDIS-30 Day Follow-Up"])))
+
+```
+
+## PA Specific
+
+### 7 Day Performance and Rank
+```{r PA7, out.width=c('50%', '50%'), fig.show='hold'}
+
+#PA 7 fig####
+Hedis %>% 
+  filter(Measure_Name %in% c("PA-7 Day Follow-Up") & AgeCat == Age) %>% 
+  mutate(RCproviderflag = factor(ifelse(Provider_Label == params$Provider, Provider_Label, "All Other Providers"))) %>% 
+  mutate(RCproviderflag = fct_relevel(RCproviderflag, "All Other Providers")) %>% 
+  group_by(RCproviderflag, BeginDate) %>% 
+  summarize(Denom = sum(Denom),
+            Num = sum(Num),
+            FUP = Num/Denom) %>% 
+  ggplot(aes(x = as.yearmon(BeginDate), y = FUP, color = RCproviderflag)) +
+  geom_line(linetype = 2) +
+  geom_point() +
+  geom_smooth(alpha = .2) +
+  geom_hline(data = Goals, yintercept = Goals$Goals2019[Goals$Measure_Name =="PA-7 Day Follow-Up"], 
+              size = 1.5, linetype = 1, alpha = .4) +
+  #geom_text(inherit.aes = F, vjust = -1,
+   #         aes(x = 2018.5, y = Goals$Goals2019[Goals$Measure_Name =="PA-7 Day Follow-Up"],
+    #            label = paste0("2019 Goal set by ", Goals$GoalOwner[Goals$Measure_Name == "PA-7 Day Follow-Up"]))) +
+  labs(title = "PA-Specific: 7 Day Follow-Up for All Providers",
+       x = "Discharge Month",
+       y = "Percent FUP",
+       color = "Providers",
+       caption = paste0("Total Number of Eligible Discharges: \n", 
+                         params$Provider, ": ", 
+                        sum(Hedis$Denom[Hedis$Provider_Label == params$Provider & Hedis$Measure_Name == "PA-7 Day Follow-Up"]), 
+                        "; All Other Providers: ", 
+                        sum(Hedis$Denom[Hedis$Provider_Label != params$Provider & Hedis$Measure_Name == "PA-7 Day Follow-Up"]))) +
+  scale_x_yearmon() +
+  scale_y_continuous(label = percent, limits = c(0, 1), 
+                     breaks = sort(c(seq(0, 1, length.out=6), Goals$Goals2019[Goals$Measure_Name == "PA-7 Day Follow-Up"])))+
+  scale_color_manual(values = c("black", "gold")) +
+  theme(legend.position = "bottom")
+
+#Overall Rank PA7####
+PA7Rank <- Hedis %>% 
+  filter(Measure_Name %in% c("PA-7 Day Follow-Up") &
+           AgeCat == Age &
+           as.yearmon(EndDate) >= as.yearmon(max(EndDate))-5/12) %>%  #filters to last 6 months of data in report. 
+  mutate(RCproviderflag = factor(ifelse(Provider_Label == params$Provider, Provider_Label, "All Other Providers"))) %>% 
+  mutate(RCproviderflag = fct_relevel(RCproviderflag, "All Other Providers"))  %>% 
+  group_by(RCproviderflag, Provider_Label) %>% 
+  summarize(Denom = sum(Denom),
+            Num = sum(Num),
+            FUP = Num/Denom) %>% 
+  filter(Denom >= 20) %>% #filtering out super small providers
+  ungroup() %>% 
+  mutate(rank = rank(-FUP)) %>% 
+  ggplot(aes(x= reorder(Provider_Label, -FUP), y = FUP, fill = RCproviderflag)) +
+  geom_bar(stat = "identity") +
+  geom_label(aes(label = rank)) +
+  geom_hline(data = Goals, yintercept = Goals$Goals2019[Goals$Measure_Name =="PA-7 Day Follow-Up"], 
+              size = 1.5, linetype = 1, alpha = .3) +
+  labs(title = "Overall Performance on PA-7 Day Follow-Up",
+       subtitle = paste0("Based on last 6 months of available data (", 
+                         as.yearmon(max(Hedis$EndDate))-5/12, " - ", as.yearmon(max(Hedis$EndDate)), ")"),
+       caption = "Limited to providers with >= 20 discharges",
+       x = "Providers",
+       y = "Percent FUP",
+       fill = "Providers") +
+  scale_fill_manual(values = c("grey", "gold")) +
+  theme(axis.text.x = element_blank()) +
+  theme(legend.position = "bottom")
+
+PA7Rank + scale_y_continuous(label = percent,
+                                 breaks = sort(c(ggplot_build(PA7Rank)$layout$panel_params[[1]]$y.major_source, 
+                                                 Goals$Goals2019[Goals$Measure_Name == "PA-7 Day Follow-Up"])))
+
+```
+
+
+### 30 Day Performance and Rank
+```{r PA30, out.width=c('50%', '50%'), fig.show='hold'}
+
+#PA 30 figure####
+Hedis %>% 
+  filter(Measure_Name %in% c("PA-30 Day Follow-Up") & AgeCat == Age) %>% 
+  mutate(RCproviderflag = factor(ifelse(Provider_Label == params$Provider, Provider_Label, "All Other Providers"))) %>% 
+  mutate(RCproviderflag = fct_relevel(RCproviderflag, "All Other Providers")) %>% 
+  group_by(RCproviderflag, BeginDate) %>% 
+  summarize(Denom = sum(Denom),
+            Num = sum(Num),
+            FUP = Num/Denom) %>% 
+  ggplot(aes(x = as.yearmon(BeginDate), y = FUP, color = RCproviderflag)) +
+  geom_line(linetype = 2) +
+  geom_point() +
+  geom_smooth(alpha = .2) +
+  geom_hline(data = Goals, yintercept = Goals$Goals2019[Goals$Measure_Name =="PA-30 Day Follow-Up"], 
+              size = 1.5, linetype = 1, alpha = .4) +
+#  geom_text(inherit.aes = F, vjust = -1,
+ #           aes(x = 2018.5, y = Goals$Goals2019[Goals$Measure_Name =="PA-30 Day Follow-Up"],
+  #              label = paste0("2019 Goal set by ", Goals$GoalOwner[Goals$Measure_Name == "PA-30 Day Follow-Up"]))) +
+  labs(title = "PA-Specific: 30 Day Follow-Up for All Providers",
+       x = "Discharge Month",
+       y = "Percent FUP",
+       color = "Providers",
+       caption = paste0("Total Number of Eligible Discharges: \n", 
+                         params$Provider, ": ", 
+                        sum(Hedis$Denom[Hedis$Provider_Label == params$Provider& Hedis$Measure_Name == "PA-30 Day Follow-Up"]), 
+                        "; All Other Providers: ", 
+                        sum(Hedis$Denom[Hedis$Provider_Label != params$Provider & Hedis$Measure_Name == "PA-30 Day Follow-Up"]))) +
+  scale_x_yearmon() +
+  scale_y_continuous(label = percent, limits = c(0, 1), 
+                     breaks = sort(c(seq(0, 1, length.out=6), Goals$Goals2019[Goals$Measure_Name == "PA-30 Day Follow-Up"])))+
+  scale_color_manual(values = c("black", "gold")) +
+  theme(legend.position = "bottom")
+
+#Overall Rank PA30####
+PA30Rank <- Hedis %>% 
+  filter(Measure_Name %in% c("PA-30 Day Follow-Up") &
+           AgeCat == Age &
+           as.yearmon(EndDate) >= as.yearmon(max(EndDate))-5/12) %>%  #filters to last 6 months of data in report. 
+  mutate(RCproviderflag = factor(ifelse(Provider_Label == params$Provider, Provider_Label, "All Other Providers"))) %>% 
+  mutate(RCproviderflag = fct_relevel(RCproviderflag, "All Other Providers")) %>% 
+  group_by(RCproviderflag, Provider_Label) %>% 
+  summarize(Denom = sum(Denom),
+            Num = sum(Num),
+            FUP = Num/Denom) %>% 
+  filter(Denom >= 20) %>% #filtering out super small providers
+  ungroup() %>% 
+  mutate(rank = rank(-FUP)) %>% 
+  ggplot(aes(x= reorder(Provider_Label, -FUP), y = FUP, fill = RCproviderflag)) +
+  geom_bar(stat = "identity") +
+  geom_label(aes(label = rank)) +
+  geom_hline(data = Goals, yintercept = Goals$Goals2019[Goals$Measure_Name =="PA-30 Day Follow-Up"], 
+            size = 1.5, linetype = 1, alpha = .3) +
+  labs(title = "Overall Performance on PA-30 Day Follow-Up",
+       subtitle = paste0("Based on last 6 months of available data (", 
+                         as.yearmon(max(Hedis$EndDate))-5/12, " - ", as.yearmon(max(Hedis$EndDate)), ")"),
+       caption = "Limited to providers with >= 20 discharges",
+       x = "Providers",
+       y = "Percent FUP",
+       fill = "Providers") +
+  scale_fill_manual(values = c("grey", "gold")) +
+  theme(axis.text.x = element_blank()) +
+  theme(legend.position = "bottom")
+
+PA30Rank + scale_y_continuous(label = percent,
+                             breaks = sort(c(ggplot_build(PA30Rank)$layout$panel_params[[1]]$y.major_source, 
+                                             Goals$Goals2019[Goals$Measure_Name == "PA-30 Day Follow-Up"])))
+
+```
+
+## 30 Day Readmission: Performance and Ranking
+```{r Rea30, out.width=c('50%', '50%'), fig.show='hold'}
+
+#Rea fig####
+Hedis %>% 
+  filter(Measure_Name %in% c("Readmission within 30 Days") & AgeCat == Age) %>% 
+  mutate(RCproviderflag = factor(ifelse(Provider_Label == params$Provider, Provider_Label, "All Other Providers"))) %>% 
+  mutate(RCproviderflag = fct_relevel(RCproviderflag, "All Other Providers")) %>% 
+  group_by(RCproviderflag, BeginDate) %>% 
+  summarize(Denom = sum(Denom),
+            Num = sum(Num),
+            FUP = Num/Denom) %>% 
+  ggplot(aes(x = as.yearmon(BeginDate), y = FUP, color = RCproviderflag)) +
+  geom_line(linetype = 2) +
+  geom_point() +
+  geom_smooth(alpha = .2) +
+  geom_hline(data = Goals, yintercept = Goals$Goals2019[Goals$Measure_Name =="Readmission within 30 Days"], 
+              size = 1.5, linetype = 1, alpha = .4) +
+ # geom_text(inherit.aes = F, vjust = -1,
+  #          aes(x = 2018.5, y = Goals$Goals2019[Goals$Measure_Name =="Readmission within 30 Days"],
+   #             label = paste0("2019 Goal set by ", Goals$GoalOwner[Goals$Measure_Name == "Readmission within 30 Days"]))) +
+  labs(title = "Readmission Within 30 Days for All Providers",
+       x = "Discharge Month",
+       y = "Percent Readmission",
+       color = "Providers",
+       caption = paste0("Total Number of Eligible Discharges: \n", 
+                         params$Provider, ": ", 
+                        sum(Hedis$Denom[Hedis$Provider_Label == params$Provider & Hedis$Measure_Name == "Readmission within 30 Days"]), 
+                        "; All Other Providers: ", 
+                        sum(Hedis$Denom[Hedis$Provider_Label != params$Provider & Hedis$Measure_Name == "Readmission within 30 Days"]))) +
+  scale_x_yearmon() +
+  scale_y_continuous(label = percent, limits = c(0,.3),
+                     breaks = sort(c(seq(0, .3, length.out=4), Goals$Goals2019[Goals$Measure_Name == "Readmission within 30 Days"])))+
+  scale_color_manual(values = c("black", "gold")) +
+  theme(legend.position = "bottom")
+
+#Overall Rank Readmit####
+ReadmitRank <- Hedis %>% 
+  filter(Measure_Name %in% c("Readmission within 30 Days") &
+          AgeCat == Age &
+         as.yearmon(EndDate) >= as.yearmon(max(EndDate))-5/12) %>%  #filters to last 6 months of data in report. 
+  mutate(RCproviderflag = factor(ifelse(Provider_Label == params$Provider, Provider_Label, "All Other Providers"))) %>% 
+  mutate(RCproviderflag = fct_relevel(RCproviderflag, "All Other Providers"))  %>% 
+  group_by(RCproviderflag, Provider_Label) %>% 
+  summarize(Denom = sum(Denom),
+            Num = sum(Num),
+            FUP = Num/Denom) %>% 
+  filter(Denom >= 20) %>% #filtering out super small providers
+  ungroup() %>% 
+  mutate(rank = rank(FUP)) %>% 
+  ggplot(aes(x= reorder(Provider_Label, FUP), y = FUP, fill = RCproviderflag)) +
+  geom_bar(stat = "identity") +
+  geom_label(aes(label = rank)) +
+  geom_hline(data = Goals, yintercept = Goals$Goals2019[Goals$Measure_Name =="Readmission within 30 Days"], 
+              size = 1.5, linetype = 1, alpha = .3) +
+  labs(title = "Overall Performance on Readmission Within 30 Days",
+       subtitle = paste0("Based on last 6 months of available data (", 
+                         as.yearmon(max(Hedis$EndDate))-5/12, " - ", as.yearmon(max(Hedis$EndDate)), ")"),
+       caption = "Limited to providers with >= 20 discharges",
+       x = "Providers",
+       y = "Percent Reamission",
+       fill = "Providers") +
+  scale_fill_manual(values = c("grey", "gold")) +
+  theme(axis.text.x = element_blank()) +
+  theme(legend.position = "bottom")
+         
+ReadmitRank + scale_y_continuous(label = percent,
+                   breaks = sort(c(ggplot_build(ReadmitRank)$layout$panel_params[[1]]$y.major_source, 
+                                   Goals$Goals2019[Goals$Measure_Name == "Readmission within 30 Days"])))
+
+
+```

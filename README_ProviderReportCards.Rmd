@@ -1,0 +1,14 @@
+---
+title: 'Readme: Provider Report Cards'
+author: "Jessica Streeter, Data Scientist | Data Informatics, CBH"
+date: "Created On 6/17/2019"
+output: pdf_document
+---
+
+These provider report cards are created at the beginning of each quarter, and delivered to this folder.  The data are from the same code that feed the 7/30/30 dashboard, and the CQI-011 Rodrigo report, although the numbers may differ slightly if the run dates for each of these reports are not identical.
+
+The goals included in these report are set by either PeopleStat, IPRO, with one national benchmark provided by NCQA. 
+
+Report cards are created for all providers by adults (18+) and children (under 18).  Providers are excluded if they are out of network, or if they do not have at least 20 discharges since 2017.  As rankings for each metric are only provided for providers with at least 20 discharges in the last 6 months, there may be cases where a small provider has a report card but is not ranked within that report card. **Please use caution when using report cards for small providers.**
+
+If you have any questions about the report cards, please contact Jessica Streeter. If you have questions about the specifications for HEDIS and PA-Specific, please contact Sarah Chen. 
